@@ -192,7 +192,7 @@ export async function buildSnapshot(symbol: string): Promise<StockSnapshot> {
     0,
     100,
   );
-  const caratRating = Math.round(clamp(2 + (compositeScore / 100) * 3, 2, 5) * 10) / 10;
+  const caratRating = Math.round(clamp(1 + (compositeScore / 100) * 4, 1, 5) * 10) / 10;
   const clarityScore = clamp(
     inverseScore(beta, 0.8, 1.8) * 0.25 +
       scoreFromRange(operatingMarginTtm, 0.05, 0.30) * 0.3 +

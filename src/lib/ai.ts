@@ -5,7 +5,7 @@ import { applyFilters } from './screener';
 const ParsedSchema = z.object({
   sector: z.string().optional(),
   minDiscountPct: z.number().min(-100).max(300).optional(),
-  minCarat: z.number().min(2).max(5).optional(),
+  minCarat: z.number().min(1).max(5).optional(),
   minQualityScore: z.number().min(0).max(100).optional(),
   maxPeTtm: z.number().min(1).max(200).optional(),
   limit: z.number().min(1).max(50).optional(),
@@ -219,7 +219,7 @@ export async function runAiScreen(query: string, universe: StockSnapshot[]) {
     const relaxed: ScreenFilters = {
       ...filters,
       minDiscountPct: filters.minDiscountPct !== undefined ? Math.max(filters.minDiscountPct - 15, 0) : undefined,
-      minCarat: filters.minCarat !== undefined ? Math.max(filters.minCarat - 0.5, 2) : undefined,
+      minCarat: filters.minCarat !== undefined ? Math.max(filters.minCarat - 0.5, 1) : undefined,
       limit: filters.limit ?? 12,
     };
     const retry = applyFilters(universe, relaxed);

@@ -41,7 +41,7 @@ export default async function StockCaratPage({
           </p>
           <ul className="mt-3 list-disc pl-5 text-sm text-slate-700 space-y-1">
             <li>Composite score 0-100 is calculated from weighted fundamentals + market behavior.</li>
-            <li>Composite score is converted into a 2.0-5.0 carat scale.</li>
+            <li>Composite score is converted into a 1.0-5.0 carat scale.</li>
             <li>Clarity modifier explains the reliability of accounting/earnings quality.</li>
           </ul>
         </section>
@@ -69,4 +69,3 @@ export default async function StockCaratPage({
     </main>
   );
 }
-
