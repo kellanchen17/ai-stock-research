@@ -17,6 +17,32 @@ const StockInsightsSchema = z.object({
   relevantIdeas: z.array(z.string().min(8).max(240)).min(2).max(5),
 });
 
+function sanitizeFiltersInput(input: Record<string, unknown>) {
+  const out: Record<string, unknown> = {};
+  const numericKeys = ['minDiscountPct', 'minCarat', 'minQualityScore', 'maxPeTtm', 'limit'] as const;
+
+  for (const key of ['sector', ...numericKeys, 'sortBy'] as const) {
+    const value = input[key];
+    if (value === null || value === undefined || value === '') continue;
+
+    if (numericKeys.includes(key as (typeof numericKeys)[number])) {
+      const n = typeof value === 'number' ? value : Number(String(value).trim());
+      if (Number.isFinite(n)) out[key] = n;
+      continue;
+    }
+
+    if (key === 'sortBy') {
+      const s = String(value);
+      if (s === 'discount' || s === 'quality' || s === 'value') out[key] = s;
+      continue;
+    }
+
+    if (key === 'sector') out[key] = String(value).trim();
+  }
+
+  return out;
+}
+
 function heuristicParse(query: string): ScreenFilters {
   const q = query.toLowerCase();
   const filters: ScreenFilters = { limit: 12, sortBy: 'discount' };
@@ -133,7 +159,7 @@ async function parseWithOllama(query: string): Promise<ScreenFilters | null> {
 
   try {
     const parsed = JSON.parse(normalizeJsonText(text));
-    return ParsedSchema.parse(parsed);
+    return ParsedSchema.parse(sanitizeFiltersInput(parsed));
   } catch {
     return null;
   }

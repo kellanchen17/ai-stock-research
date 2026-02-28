@@ -65,7 +65,7 @@ export function AiSearch({ initial }: { initial: StockSnapshot[] }) {
         )}
         {data?.provider === 'heuristic' && (
           <p className="mt-1 text-xs text-amber-700">
-            Ollama is unavailable, so the app used rule-based parsing. Start Ollama to re-enable full AI responses.
+            Fallback parser was used for this query. Ollama may have returned non-structured output this time.
           </p>
         )}
         {error && <p className="mt-3 text-xs text-rose-600">{error}</p>}
