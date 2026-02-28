@@ -233,16 +233,23 @@ export async function buildSnapshot(symbol: string): Promise<StockSnapshot> {
 }
 
 export async function getUniverseSnapshots(symbols: string[] = DEFAULT_SCREEN_SYMBOLS) {
-  const tasks = symbols.map(async (symbol) => {
-    try {
-      return await buildSnapshot(symbol);
-    } catch {
-      return null;
-    }
-  });
+  const BATCH_SIZE = 30;
+  const out: StockSnapshot[] = [];
 
-  const results = await Promise.all(tasks);
-  return results.filter(Boolean) as StockSnapshot[];
+  for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+    const batch = symbols.slice(i, i + BATCH_SIZE);
+    const tasks = batch.map(async (symbol) => {
+      try {
+        return await buildSnapshot(symbol);
+      } catch {
+        return null;
+      }
+    });
+    const results = await Promise.all(tasks);
+    out.push(...(results.filter(Boolean) as StockSnapshot[]));
+  }
+
+  return out;
 }
 
 function normalizeSectorTerm(sector?: string) {
