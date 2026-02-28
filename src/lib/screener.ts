@@ -197,28 +197,66 @@ export function applyFilters(stocks: StockSnapshot[], filters: ScreenFilters): S
 }
 
 export async function getStockDetail(symbol: string): Promise<StockDetail> {
+  return getStockDetailWithRange(symbol, '6M');
+}
+
+function getRangeStartUnix(range: string, ipo?: string) {
+  const now = new Date();
+  const upper = range.toUpperCase();
+
+  if (upper === '1M') {
+    const d = new Date(now);
+    d.setMonth(d.getMonth() - 1);
+    return Math.floor(d.getTime() / 1000);
+  }
+  if (upper === '3M') {
+    const d = new Date(now);
+    d.setMonth(d.getMonth() - 3);
+    return Math.floor(d.getTime() / 1000);
+  }
+  if (upper === '6M') {
+    const d = new Date(now);
+    d.setMonth(d.getMonth() - 6);
+    return Math.floor(d.getTime() / 1000);
+  }
+  if (upper === 'YTD') {
+    const d = new Date(now.getFullYear(), 0, 1);
+    return Math.floor(d.getTime() / 1000);
+  }
+  if (upper === 'ALL') {
+    if (ipo) {
+      const ipoMs = Date.parse(`${ipo}T00:00:00Z`);
+      if (Number.isFinite(ipoMs)) return Math.floor(ipoMs / 1000);
+    }
+    const d = new Date(now);
+    d.setFullYear(d.getFullYear() - 20);
+    return Math.floor(d.getTime() / 1000);
+  }
+
+  const d = new Date(now);
+  d.setMonth(d.getMonth() - 6);
+  return Math.floor(d.getTime() / 1000);
+}
+
+export async function getStockDetailWithRange(symbol: string, range: string = '6M'): Promise<StockDetail> {
   const key = symbol.toUpperCase();
   const snapshot = await buildSnapshot(key);
-  const [profile, metricResp, candles] = await Promise.all([
-    getProfile(key),
-    getMetrics(key),
-    (async () => {
-      const now = Math.floor(Date.now() / 1000);
-      const sixMonthsAgo = now - 60 * 60 * 24 * 180;
-      try {
-        const primary = await getCandles(key, sixMonthsAgo, now, 'D');
-        if ((primary.c?.length ?? 0) > 0 && (primary.t?.length ?? 0) > 0) return primary;
-      } catch {
-        // fall through to no-key fallback
-      }
+  const [profile, metricResp] = await Promise.all([getProfile(key), getMetrics(key)]);
+  const now = Math.floor(Date.now() / 1000);
+  const fromUnix = getRangeStartUnix(range, typeof profile.ipo === 'string' ? profile.ipo : undefined);
 
-      try {
-        return await getStooqCandles(key, sixMonthsAgo, now);
-      } catch {
-        return { t: [], c: [] };
-      }
-    })(),
-  ]);
+  let candles: { t: number[]; c: number[] };
+  try {
+    const primary = await getCandles(key, fromUnix, now, 'D');
+    if ((primary.c?.length ?? 0) > 0 && (primary.t?.length ?? 0) > 0) candles = primary;
+    else candles = await getStooqCandles(key, fromUnix, now);
+  } catch {
+    try {
+      candles = await getStooqCandles(key, fromUnix, now);
+    } catch {
+      candles = { t: [], c: [] };
+    }
+  }
 
   return {
     snapshot,

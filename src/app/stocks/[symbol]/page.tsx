@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { PriceChart } from '@/components/price-chart';
+import { StockChartPanel } from '@/components/stock-chart-panel';
 import { getStockDetail } from '@/lib/screener';
 import { formatCurrency, formatPct } from '@/lib/utils';
 
@@ -17,11 +17,6 @@ export default async function StockPage({ params }: { params: Promise<{ symbol: 
   }
 
   const s = detail.snapshot;
-  const points = detail.candles.t.map((t, i) => ({
-    date: new Date(t * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-    close: detail.candles.c[i],
-  }));
-
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <div className="mx-auto max-w-6xl px-6 py-10 space-y-6">
@@ -42,7 +37,7 @@ export default async function StockPage({ params }: { params: Promise<{ symbol: 
           </div>
         </section>
 
-        <PriceChart points={points} />
+        <StockChartPanel symbol={s.symbol} initialCandles={detail.candles} />
 
         <section className="grid gap-4 md:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
