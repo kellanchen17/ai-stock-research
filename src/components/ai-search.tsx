@@ -12,7 +12,7 @@ type AiResult = {
 };
 
 export function AiSearch({ initial }: { initial: StockSnapshot[] }) {
-  const [query, setQuery] = useState('Find me stocks on discounts in the industrials sector with 4+ Morningstar stars');
+  const [query, setQuery] = useState('Find me discounted industrial stocks with 4.0+ carat rating');
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<AiResult | null>(null);
   const [error, setError] = useState<string | null>(null);

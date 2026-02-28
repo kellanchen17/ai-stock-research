@@ -31,13 +31,17 @@ export type StockSnapshot = {
   roeTtm?: number;
   operatingMarginTtm?: number;
   debtToEquity?: number;
-  morningstarStars?: number;
-  morningstarSource?: string;
-  morningstarAsOf?: string;
   dcf: DcfResult;
   valueScore: number;
   qualityScore: number;
   moatProxyScore: number;
+  growthScore: number;
+  financialStrengthScore: number;
+  momentumScore: number;
+  compositeScore: number;
+  caratRating: number;
+  clarityScore: number;
+  clarityLabel: string;
 };
 
 export type StockDetail = {
@@ -50,7 +54,7 @@ export type StockDetail = {
 export type ScreenFilters = {
   sector?: string;
   minDiscountPct?: number;
-  minStarRating?: number;
+  minCarat?: number;
   minQualityScore?: number;
   maxPeTtm?: number;
   limit?: number;

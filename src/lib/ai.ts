@@ -5,7 +5,7 @@ import { applyFilters } from './screener';
 const ParsedSchema = z.object({
   sector: z.string().optional(),
   minDiscountPct: z.number().min(-100).max(300).optional(),
-  minStarRating: z.number().min(1).max(5).optional(),
+  minCarat: z.number().min(2).max(5).optional(),
   minQualityScore: z.number().min(0).max(100).optional(),
   maxPeTtm: z.number().min(1).max(200).optional(),
   limit: z.number().min(1).max(50).optional(),
@@ -36,8 +36,8 @@ function heuristicParse(query: string): ScreenFilters {
     filters.minQualityScore = 65;
     filters.sortBy = 'quality';
   }
-  if (q.includes('morningstar') || q.includes('star')) {
-    filters.minStarRating = 4;
+  if (q.includes('carat') || q.includes('diamond')) {
+    filters.minCarat = 4;
   }
   return filters;
 }
@@ -83,7 +83,7 @@ function shouldPreferDirectMatch(query: string, matches: StockSnapshot[]) {
   const q = query.trim().toLowerCase();
   const words = q.split(/\s+/).filter(Boolean);
   const broadTerms = [
-    'sector', 'stocks', 'stock', 'undervalued', 'cheap', 'discount', 'quality', 'morningstar', 'star', 'pe',
+    'sector', 'stocks', 'stock', 'undervalued', 'cheap', 'discount', 'quality', 'carat', 'diamond', 'pe',
     'industrials', 'technology', 'financial', 'healthcare', 'energy', 'consumer',
   ];
   const hasBroadTerm = broadTerms.some((t) => q.includes(t));
@@ -123,7 +123,7 @@ async function callOllama(system: string, user: string, jsonMode = false, temper
 
 async function parseWithOllama(query: string): Promise<ScreenFilters | null> {
   const text = await callOllama(
-    'Convert the user query to JSON stock screener filters only. Return one JSON object only with no markdown. Allowed keys: sector, minDiscountPct, minStarRating, minQualityScore, maxPeTtm, limit, sortBy.',
+    'Convert the user query to JSON stock screener filters only. Return one JSON object only with no markdown. Allowed keys: sector, minDiscountPct, minCarat, minQualityScore, maxPeTtm, limit, sortBy.',
     `Query: ${query}`,
     true,
     0,
@@ -145,7 +145,8 @@ async function explainWithOllama(query: string, filters: ScreenFilters, results:
     sector: s.sector,
     price: s.price,
     dcfUpsidePct: Number(s.dcf.upsidePct.toFixed(1)),
-    stars: s.morningstarStars ?? null,
+    carat: s.caratRating,
+    composite: s.compositeScore,
     quality: s.qualityScore,
     value: s.valueScore,
   }));
@@ -192,7 +193,7 @@ export async function runAiScreen(query: string, universe: StockSnapshot[]) {
     const relaxed: ScreenFilters = {
       ...filters,
       minDiscountPct: filters.minDiscountPct !== undefined ? Math.max(filters.minDiscountPct - 15, 0) : undefined,
-      minStarRating: filters.minStarRating !== undefined ? Math.max(filters.minStarRating - 1, 1) : undefined,
+      minCarat: filters.minCarat !== undefined ? Math.max(filters.minCarat - 0.5, 2) : undefined,
       limit: filters.limit ?? 12,
     };
     const retry = applyFilters(universe, relaxed);
@@ -234,7 +235,8 @@ export async function generateStockInsights(stock: StockSnapshot, searchContext?
       valueScore: stock.valueScore,
       qualityScore: stock.qualityScore,
       moatProxyScore: stock.moatProxyScore,
-      morningstarStars: stock.morningstarStars ?? null,
+      caratRating: stock.caratRating,
+      clarityLabel: stock.clarityLabel,
     })}\nUser search context: ${searchContext || 'none provided'}\nGive 2-4 relevant ideas tailored to this context if available.`,
     true,
     0.2,

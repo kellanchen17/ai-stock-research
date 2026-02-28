@@ -1,6 +1,5 @@
 import { getCandles, getMetrics, getProfile, getQuote, getStooqCandles } from './finnhub';
 import { buildAdaptiveDcfInputs, calculateDcf, normalizeRatio } from './dcf';
-import { getMorningstarMap, getMorningstarStar } from './morningstar';
 import type { ScreenFilters, StockDetail, StockSnapshot } from './types';
 import { DEFAULT_SCREEN_SYMBOLS } from './universe';
 
@@ -31,16 +30,49 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function normalizeMarketCap(raw: number | undefined) {
+  if (raw === undefined) return undefined;
+  // Finnhub market cap is generally in millions.
+  return raw < 10_000_000 ? raw * 1_000_000 : raw;
+}
+
+function inferSharesOutstanding(params: {
+  sharesRaw?: number;
+  marketCap?: number;
+  price: number;
+}) {
+  const { sharesRaw, marketCap, price } = params;
+  if (!sharesRaw || !Number.isFinite(sharesRaw) || sharesRaw <= 0) {
+    if (marketCap && price > 0) return Math.max(marketCap / price, 1);
+    return 1;
+  }
+
+  const candidates = [sharesRaw, sharesRaw * 1_000, sharesRaw * 1_000_000, sharesRaw * 1_000_000_000];
+  const valid = candidates.filter((n) => Number.isFinite(n) && n > 0);
+  if (!marketCap || price <= 0) return valid[valid.length - 1] ?? 1;
+
+  const target = marketCap / price;
+  let best = valid[0];
+  let bestErr = Math.abs(best - target);
+  for (const c of valid.slice(1)) {
+    const err = Math.abs(c - target);
+    if (err < bestErr) {
+      best = c;
+      bestErr = err;
+    }
+  }
+  return Math.max(best, 1);
+}
+
 export async function buildSnapshot(symbol: string): Promise<StockSnapshot> {
   const key = symbol.toUpperCase();
   const cached = snapshotCache.get(key);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data;
 
-  const [quote, profile, metricResp, star] = await Promise.all([
+  const [quote, profile, metricResp] = await Promise.all([
     getQuote(key),
     getProfile(key),
     getMetrics(key),
-    getMorningstarStar(key),
   ]);
 
   const metrics = metricResp.metric ?? {};
@@ -48,19 +80,21 @@ export async function buildSnapshot(symbol: string): Promise<StockSnapshot> {
 
   const sharesOutstandingRaw =
     getMetric(metrics, 'shareOutstanding') ??
-    (typeof profile.shareOutstanding === 'number' ? profile.shareOutstanding : undefined) ??
-    1;
-  // Finnhub profile/metric shareOutstanding is typically in millions.
-  const sharesOutstanding = sharesOutstandingRaw < 10_000_000 ? sharesOutstandingRaw * 1_000_000 : sharesOutstandingRaw;
+    (typeof profile.shareOutstanding === 'number' ? profile.shareOutstanding : undefined);
 
   const freeCashFlowAnnual = getMetric(metrics, 'freeCashFlowAnnual');
   const freeCashFlowTtm = getMetric(metrics, 'freeCashFlowTTM');
   const cashFlowPerShareTtm = getMetric(metrics, 'cashFlowPerShareTTM');
-  const marketCapRaw =
+  const marketCap = normalizeMarketCap(
     getMetric(metrics, 'marketCapitalization') ??
-    (typeof profile.marketCapitalization === 'number' ? profile.marketCapitalization : undefined);
-  // Finnhub market cap is generally in millions.
-  const marketCap = marketCapRaw !== undefined && marketCapRaw < 10_000_000 ? marketCapRaw * 1_000_000 : marketCapRaw;
+      (typeof profile.marketCapitalization === 'number' ? profile.marketCapitalization : undefined),
+  );
+
+  const sharesOutstanding = inferSharesOutstanding({
+    sharesRaw: sharesOutstandingRaw,
+    marketCap,
+    price,
+  });
 
   const fcfFromTotal = freeCashFlowAnnual ?? freeCashFlowTtm;
   const normalizedFcfFromTotal =
@@ -68,13 +102,16 @@ export async function buildSnapshot(symbol: string): Promise<StockSnapshot> {
   const fcfFromPerShare =
     cashFlowPerShareTtm !== undefined && sharesOutstanding > 0 ? cashFlowPerShareTtm * sharesOutstanding : undefined;
 
-  const baseFcf = Math.max(
+  const baseFcfRaw =
     normalizedFcfFromTotal ??
-      fcfFromPerShare ??
-      // Last-resort proxy if FCF metrics are missing: assume 3% FCF yield on market cap.
-      ((marketCap ?? Math.max(price * sharesOutstanding, 1)) * 0.03),
-    1,
-  );
+    fcfFromPerShare ??
+    // Last-resort proxy if FCF metrics are missing: assume 3% FCF yield on market cap.
+    ((marketCap ?? Math.max(price * sharesOutstanding, 1)) * 0.03);
+  const baseFcf = Math.max(baseFcfRaw, 1);
+  const baseFcfConstrained =
+    marketCap && marketCap > 0
+      ? clamp(baseFcf, marketCap * 0.005, marketCap * 0.20)
+      : baseFcf;
 
   const peTtm = getMetric(metrics, 'peTTM');
   const roeTtm = normalizeRatio(getMetric(metrics, 'roeTTM'));
@@ -92,30 +129,79 @@ export async function buildSnapshot(symbol: string): Promise<StockSnapshot> {
     debtToEquity,
     beta,
   });
+  const maxGrowthCap = marketCap && marketCap > 1_000_000_000_000 ? 0.08 : marketCap && marketCap > 300_000_000_000 ? 0.10 : 0.14;
+  const adjustedGrowthRates = adaptiveDcfInputs.growthRates.map((g, i) =>
+    clamp(g, adaptiveDcfInputs.terminalGrowth + 0.005, Math.max(maxGrowthCap - i * 0.0075, adaptiveDcfInputs.terminalGrowth + 0.005)),
+  );
 
   const dcf = calculateDcf({
     currentPrice: price,
-    baseFcf,
+    baseFcf: baseFcfConstrained,
     sharesOutstanding,
-    growthRates: adaptiveDcfInputs.growthRates,
+    growthRates: adjustedGrowthRates,
     discountRate: adaptiveDcfInputs.discountRate,
     terminalGrowth: adaptiveDcfInputs.terminalGrowth,
   });
+  const anchorPerShare = marketCap && sharesOutstanding > 0 ? marketCap / sharesOutstanding : dcf.valuePerShare;
+  const blendedValuePerShare = (dcf.valuePerShare * 0.35) + (anchorPerShare * 0.65);
+  const blendedUpside = price > 0 ? ((blendedValuePerShare - price) / price) * 100 : 0;
+  const normalizedDcf = {
+    ...dcf,
+    fairValue: blendedValuePerShare * sharesOutstanding,
+    valuePerShare: blendedValuePerShare,
+    upsidePct: clamp(blendedUpside, -80, 150),
+  };
 
-  const fcfYield = dcf.fairValue > 0 ? (baseFcf / dcf.fairValue) * 100 : undefined;
+  const fcfYield = normalizedDcf.fairValue > 0 ? (baseFcfConstrained / normalizedDcf.fairValue) * 100 : undefined;
   const growthQualityScore = scoreFromRange(normalizeRatio(revenueGrowth), 0.01, 0.15);
-  const valueScore =
-    scoreFromRange(dcf.upsidePct, -30, 60) * 0.5 +
+  const valueScoreRaw =
+    scoreFromRange(normalizedDcf.upsidePct, -30, 60) * 0.5 +
     inverseScore(peTtm, 10, 35) * 0.2 +
-    inverseScore(dcf.assumptions.discountRate, 0.08, 0.14) * 0.15 +
+    inverseScore(normalizedDcf.assumptions.discountRate, 0.08, 0.14) * 0.15 +
     scoreFromRange(fcfYield, 2, 8) * 0.15;
-  const qualityScore =
+  const qualityScoreRaw =
     scoreFromRange(roeTtm, 0.05, 0.30) * 0.3 +
     scoreFromRange(operatingMarginTtm, 0.05, 0.30) * 0.25 +
     inverseScore(debtToEquity, 0.3, 2.5) * 0.2 +
     growthQualityScore * 0.15 +
-    inverseScore(dcf.assumptions.discountRate, 0.08, 0.14) * 0.1;
-  const moatProxyScore = scoreFromRange(normalizeRatio(getMetric(metrics, 'grossMarginTTM')), 0.2, 0.6);
+    inverseScore(normalizedDcf.assumptions.discountRate, 0.08, 0.14) * 0.1;
+  const moatProxyScoreRaw = scoreFromRange(normalizeRatio(getMetric(metrics, 'grossMarginTTM')), 0.2, 0.6);
+  const qualityScore = clamp(qualityScoreRaw, 0, 100);
+  const valueScore = clamp(valueScoreRaw, 0, 100);
+  const moatProxyScore = clamp(moatProxyScoreRaw, 0, 100);
+  const growthScore = clamp(
+    scoreFromRange(normalizeRatio(revenueGrowth), -0.05, 0.20) * 0.5 +
+      scoreFromRange(normalizeRatio(epsGrowth), -0.05, 0.25) * 0.5,
+    0,
+    100,
+  );
+  const financialStrengthScore = clamp(
+    inverseScore(debtToEquity, 0.2, 2.5) * 0.4 +
+      scoreFromRange(roeTtm, 0.05, 0.35) * 0.35 +
+      scoreFromRange(operatingMarginTtm, 0.05, 0.35) * 0.25,
+    0,
+    100,
+  );
+  const momentumScore = clamp(scoreFromRange(quote.dp, -20, 20), 0, 100);
+  const compositeScore = clamp(
+    qualityScore * 0.25 +
+      growthScore * 0.20 +
+      financialStrengthScore * 0.20 +
+      valueScore * 0.20 +
+      momentumScore * 0.15,
+    0,
+    100,
+  );
+  const caratRating = Math.round(clamp(2 + (compositeScore / 100) * 3, 2, 5) * 10) / 10;
+  const clarityScore = clamp(
+    inverseScore(beta, 0.8, 1.8) * 0.25 +
+      scoreFromRange(operatingMarginTtm, 0.05, 0.30) * 0.3 +
+      scoreFromRange(roeTtm, 0.05, 0.30) * 0.25 +
+      inverseScore(debtToEquity, 0.2, 2.5) * 0.2,
+    0,
+    100,
+  );
+  const clarityLabel = clarityScore >= 85 ? 'FL' : clarityScore >= 70 ? 'VVS' : clarityScore >= 55 ? 'VS' : clarityScore >= 40 ? 'SI' : 'I';
 
   const snapshot: StockSnapshot = {
     symbol: key,
@@ -123,18 +209,22 @@ export async function buildSnapshot(symbol: string): Promise<StockSnapshot> {
     sector: (typeof profile.finnhubIndustry === 'string' && profile.finnhubIndustry) || 'Unknown',
     price,
     changePct: quote.dp ?? 0,
-    marketCap: typeof profile.marketCapitalization === 'number' ? profile.marketCapitalization : undefined,
+    marketCap,
     peTtm,
     roeTtm,
     operatingMarginTtm,
     debtToEquity,
-    morningstarStars: star?.stars,
-    morningstarSource: star?.source,
-    morningstarAsOf: star?.asOf,
-    dcf,
-    valueScore: Math.round(clamp(valueScore, 0, 100)),
-    qualityScore: Math.round(clamp(qualityScore, 0, 100)),
-    moatProxyScore: Math.round(clamp(moatProxyScore, 0, 100)),
+    dcf: normalizedDcf,
+    valueScore: Math.round(valueScore),
+    qualityScore: Math.round(qualityScore),
+    moatProxyScore: Math.round(moatProxyScore),
+    growthScore: Math.round(growthScore),
+    financialStrengthScore: Math.round(financialStrengthScore),
+    momentumScore: Math.round(momentumScore),
+    compositeScore: Math.round(compositeScore),
+    caratRating,
+    clarityScore: Math.round(clarityScore),
+    clarityLabel,
   };
 
   snapshotCache.set(key, { ts: Date.now(), data: snapshot });
@@ -142,17 +232,9 @@ export async function buildSnapshot(symbol: string): Promise<StockSnapshot> {
 }
 
 export async function getUniverseSnapshots(symbols: string[] = DEFAULT_SCREEN_SYMBOLS) {
-  const stars = await getMorningstarMap();
   const tasks = symbols.map(async (symbol) => {
     try {
-      const s = await buildSnapshot(symbol);
-      const star = stars.get(symbol.toUpperCase());
-      if (star) {
-        s.morningstarStars = star.stars;
-        s.morningstarAsOf = star.asOf;
-        s.morningstarSource = star.source;
-      }
-      return s;
+      return await buildSnapshot(symbol);
     } catch {
       return null;
     }
@@ -181,7 +263,7 @@ export function applyFilters(stocks: StockSnapshot[], filters: ScreenFilters): S
   const filtered = stocks.filter((s) => {
     if (sectorTerms && !sectorTerms.some((term) => s.sector.toLowerCase().includes(term))) return false;
     if (filters.minDiscountPct !== undefined && s.dcf.upsidePct < filters.minDiscountPct) return false;
-    if (filters.minStarRating !== undefined && (s.morningstarStars ?? 0) < filters.minStarRating) return false;
+    if (filters.minCarat !== undefined && s.caratRating < filters.minCarat) return false;
     if (filters.minQualityScore !== undefined && s.qualityScore < filters.minQualityScore) return false;
     if (filters.maxPeTtm !== undefined && (s.peTtm ?? 999) > filters.maxPeTtm) return false;
     return true;

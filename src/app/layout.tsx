@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'AI Stock Research',
-  description: 'DCF valuation + Morningstar star ratings + AI stock screening',
+  description: 'DCF valuation + AI carat ratings + AI stock screening',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

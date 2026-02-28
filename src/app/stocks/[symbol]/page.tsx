@@ -42,7 +42,7 @@ export default async function StockPage({
             <div className="text-right">
               <p className="text-3xl font-semibold">{formatCurrency(s.price)}</p>
               <p className={s.changePct >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{formatPct(s.changePct)}</p>
-              <p className="text-amber-600 text-sm mt-1">Morningstar Stars: {s.morningstarStars ? '★'.repeat(s.morningstarStars) : 'N/A'}</p>
+              <p className="text-amber-600 text-sm mt-1">Carat Rating: 💎 {s.caratRating.toFixed(1)} ct · Clarity {s.clarityLabel}</p>
             </div>
           </div>
         </section>
@@ -60,8 +60,8 @@ export default async function StockPage({
             <p className={s.dcf.upsidePct >= 0 ? 'text-2xl font-semibold text-emerald-600' : 'text-2xl font-semibold text-rose-600'}>{formatPct(s.dcf.upsidePct)}</p>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <p className="text-slate-500 text-sm">Quality / Value / Moat Proxy</p>
-            <p className="text-2xl font-semibold text-indigo-700">{s.qualityScore} / {s.valueScore} / {s.moatProxyScore}</p>
+            <p className="text-slate-500 text-sm">Composite / Carat / Clarity</p>
+            <p className="text-2xl font-semibold text-indigo-700">{s.compositeScore} / {s.caratRating.toFixed(1)} ct / {s.clarityLabel}</p>
           </div>
         </section>
 

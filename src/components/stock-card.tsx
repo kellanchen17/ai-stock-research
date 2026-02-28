@@ -31,8 +31,8 @@ export function StockCard({ stock, searchContext }: { stock: StockSnapshot; sear
           <p className={good ? 'text-emerald-600 font-medium' : 'text-rose-600 font-medium'}>{formatPct(stock.dcf.upsidePct)}</p>
         </div>
         <div className="rounded-xl bg-slate-50 p-2">
-          <p className="text-slate-500">Morningstar</p>
-          <p className="text-amber-500 font-medium">{stock.morningstarStars ? '★'.repeat(stock.morningstarStars) : '—'}</p>
+          <p className="text-slate-500">Carat Rating</p>
+          <p className="text-amber-500 font-medium">💎 {stock.caratRating.toFixed(1)} ct</p>
         </div>
         <div className="rounded-xl bg-slate-50 p-2">
           <p className="text-slate-500">Value Score</p>
