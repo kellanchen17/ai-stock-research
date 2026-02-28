@@ -48,6 +48,45 @@ function normalizeJsonText(raw: string): string {
   return text;
 }
 
+function scoreDirectMatch(query: string, stock: StockSnapshot) {
+  const q = query.trim().toLowerCase();
+  if (!q) return 0;
+
+  const symbol = stock.symbol.toLowerCase();
+  const name = stock.name.toLowerCase();
+
+  if (symbol === q) return 100;
+  if (name === q) return 95;
+  if (name.startsWith(q)) return 90;
+  if (symbol.startsWith(q)) return 85;
+  if (name.includes(q)) return 75;
+  return 0;
+}
+
+function findDirectStockMatches(query: string, universe: StockSnapshot[]) {
+  const scored = universe
+    .map((s) => ({ stock: s, score: scoreDirectMatch(query, s) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || b.stock.valueScore - a.stock.valueScore)
+    .map((x) => x.stock);
+
+  return scored.slice(0, 12);
+}
+
+function shouldPreferDirectMatch(query: string, matches: StockSnapshot[]) {
+  if (matches.length === 0) return false;
+  const q = query.trim().toLowerCase();
+  const words = q.split(/\s+/).filter(Boolean);
+  const broadTerms = [
+    'sector', 'stocks', 'stock', 'undervalued', 'cheap', 'discount', 'quality', 'morningstar', 'star', 'pe',
+    'industrials', 'technology', 'financial', 'healthcare', 'energy', 'consumer',
+  ];
+  const hasBroadTerm = broadTerms.some((t) => q.includes(t));
+  const top = matches[0];
+  const topScore = scoreDirectMatch(query, top);
+  return topScore >= 90 || (!hasBroadTerm && words.length <= 4);
+}
+
 async function callOllama(system: string, user: string, jsonMode = false, temperature = 0): Promise<string | null> {
   const baseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
   const model = process.env.OLLAMA_MODEL || 'llama3.1:8b';
@@ -130,6 +169,16 @@ export function buildScreenExplanation(query: string, filters: ScreenFilters, re
 }
 
 export async function runAiScreen(query: string, universe: StockSnapshot[]) {
+  const directMatches = findDirectStockMatches(query, universe);
+  if (shouldPreferDirectMatch(query, directMatches)) {
+    const directFilters: ScreenFilters = { limit: 12, sortBy: 'value' };
+    const explanation =
+      (await explainWithOllama(query, directFilters, directMatches)) ??
+      `Direct match for "${query}": ${directMatches.map((s) => s.symbol).join(', ')}.`;
+
+    return { filters: directFilters, provider: 'direct-match', results: directMatches, explanation };
+  }
+
   const { filters, provider } = await parseScreenQuery(query);
   let results = applyFilters(universe, filters);
 
