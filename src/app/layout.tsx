@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'AI Stock Research',
-  description: 'DCF valuation + AI carat ratings + AI stock screening',
+  title: 'Stock Lab',
+  description: 'AI Powered Stock Research with DCF fair value + AI carat ratings',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

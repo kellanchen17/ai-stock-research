@@ -5,8 +5,10 @@ import { applyFilters } from './screener';
 const ParsedSchema = z.object({
   sector: z.string().optional(),
   minDiscountPct: z.number().min(-100).max(300).optional(),
+  minFairValueGapPct: z.number().min(-100).max(300).optional(),
   minCarat: z.number().min(1).max(5).optional(),
   minQualityScore: z.number().min(0).max(100).optional(),
+  minGrowthScore: z.number().min(0).max(100).optional(),
   maxPeTtm: z.number().min(1).max(200).optional(),
   limit: z.number().min(1).max(50).optional(),
   sortBy: z.enum(['discount', 'quality', 'value']).optional(),
@@ -19,7 +21,7 @@ const StockInsightsSchema = z.object({
 
 function sanitizeFiltersInput(input: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
-  const numericKeys = ['minDiscountPct', 'minCarat', 'minQualityScore', 'maxPeTtm', 'limit'] as const;
+  const numericKeys = ['minDiscountPct', 'minFairValueGapPct', 'minCarat', 'minQualityScore', 'minGrowthScore', 'maxPeTtm', 'limit'] as const;
 
   for (const key of ['sector', ...numericKeys, 'sortBy'] as const) {
     const value = input[key];
@@ -27,13 +29,20 @@ function sanitizeFiltersInput(input: Record<string, unknown>) {
 
     if (numericKeys.includes(key as (typeof numericKeys)[number])) {
       const n = typeof value === 'number' ? value : Number(String(value).trim());
-      if (Number.isFinite(n)) out[key] = n;
+      if (!Number.isFinite(n)) continue;
+      if (key === 'maxPeTtm' && n < 1) continue;
+      if (key === 'limit' && n < 1) continue;
+      if (key === 'minDiscountPct' || key === 'minFairValueGapPct') out[key] = Math.min(n, 60);
+      else if (key === 'minGrowthScore') out[key] = Math.min(n, 95);
+      else if (key === 'limit') out[key] = n < 3 ? 12 : n;
+      else out[key] = n;
       continue;
     }
 
     if (key === 'sortBy') {
-      const s = String(value);
+      const s = String(value).toLowerCase();
       if (s === 'discount' || s === 'quality' || s === 'value') out[key] = s;
+      else if (s === 'growth' || s === 'upside' || s === 'fairvalue') out[key] = 'discount';
       continue;
     }
 
@@ -57,10 +66,16 @@ function heuristicParse(query: string): ScreenFilters {
 
   if (q.includes('discount') || q.includes('undervalued') || q.includes('cheap') || q.includes('margin of safety')) {
     filters.minDiscountPct = 15;
+    filters.minFairValueGapPct = 15;
   }
   if (q.includes('high quality') || q.includes('quality')) {
     filters.minQualityScore = 65;
     filters.sortBy = 'quality';
+  }
+  if (q.includes('high upside') || q.includes('upside') || q.includes('projected growth') || q.includes('high growth') || q.includes('growth')) {
+    filters.minFairValueGapPct = Math.max(filters.minFairValueGapPct ?? 0, 20);
+    filters.minGrowthScore = 65;
+    filters.sortBy = 'discount';
   }
   if (q.includes('carat') || q.includes('diamond')) {
     filters.minCarat = 4;
@@ -148,21 +163,20 @@ async function callOllama(system: string, user: string, jsonMode = false, temper
 }
 
 async function parseWithOllama(query: string): Promise<ScreenFilters | null> {
-  const text = await callOllama(
-    'Convert the user query to JSON stock screener filters only. Return one JSON object only with no markdown. Allowed keys: sector, minDiscountPct, minCarat, minQualityScore, maxPeTtm, limit, sortBy.',
-    `Query: ${query}`,
-    true,
-    0,
-  );
+  const system =
+    'Convert the user query to JSON stock screener filters only. Return one JSON object only with no markdown. Allowed keys: sector, minDiscountPct, minFairValueGapPct, minCarat, minQualityScore, minGrowthScore, maxPeTtm, limit, sortBy.';
 
-  if (!text) return null;
-
-  try {
-    const parsed = JSON.parse(normalizeJsonText(text));
-    return ParsedSchema.parse(sanitizeFiltersInput(parsed));
-  } catch {
-    return null;
+  for (const jsonMode of [true, false]) {
+    const text = await callOllama(system, `Query: ${query}`, jsonMode, 0);
+    if (!text) continue;
+    try {
+      const parsed = JSON.parse(normalizeJsonText(text));
+      return ParsedSchema.parse(sanitizeFiltersInput(parsed));
+    } catch {
+      // retry once with alternate mode
+    }
   }
+  return null;
 }
 
 async function explainWithOllama(query: string, filters: ScreenFilters, results: StockSnapshot[]): Promise<string | null> {
@@ -171,9 +185,11 @@ async function explainWithOllama(query: string, filters: ScreenFilters, results:
     sector: s.sector,
     price: s.price,
     dcfUpsidePct: Number(s.dcf.upsidePct.toFixed(1)),
+    fairValuePerShare: Number(s.dcf.valuePerShare.toFixed(2)),
     carat: s.caratRating,
     composite: s.compositeScore,
     quality: s.qualityScore,
+    growth: s.growthScore,
     value: s.valueScore,
   }));
 
@@ -216,16 +232,42 @@ export async function runAiScreen(query: string, universe: StockSnapshot[]) {
 
   let usedFilters = filters;
   if (results.length === 0) {
-    const relaxed: ScreenFilters = {
+    const relaxed1: ScreenFilters = {
       ...filters,
       minDiscountPct: filters.minDiscountPct !== undefined ? Math.max(filters.minDiscountPct - 15, 0) : undefined,
+      minFairValueGapPct: filters.minFairValueGapPct !== undefined ? Math.max(filters.minFairValueGapPct - 15, 0) : undefined,
       minCarat: filters.minCarat !== undefined ? Math.max(filters.minCarat - 0.5, 1) : undefined,
+      minGrowthScore: filters.minGrowthScore !== undefined ? Math.max(filters.minGrowthScore - 10, 0) : undefined,
       limit: filters.limit ?? 12,
     };
-    const retry = applyFilters(universe, relaxed);
-    if (retry.length > 0) {
-      results = retry;
-      usedFilters = relaxed;
+    const retry1 = applyFilters(universe, relaxed1);
+    if (retry1.length > 0) {
+      results = retry1;
+      usedFilters = relaxed1;
+    } else {
+      const relaxed2: ScreenFilters = {
+        ...relaxed1,
+        minDiscountPct: undefined,
+        minFairValueGapPct: undefined,
+        minGrowthScore: undefined,
+      };
+      const retry2 = applyFilters(universe, relaxed2);
+      if (retry2.length > 0) {
+        results = retry2;
+        usedFilters = relaxed2;
+      } else if (filters.sector) {
+        const relaxed3: ScreenFilters = {
+          ...relaxed2,
+          sector: undefined,
+          sortBy: 'value',
+          limit: filters.limit ?? 12,
+        };
+        const retry3 = applyFilters(universe, relaxed3);
+        if (retry3.length > 0) {
+          results = retry3;
+          usedFilters = relaxed3;
+        }
+      }
     }
   }
 

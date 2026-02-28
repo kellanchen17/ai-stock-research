@@ -264,8 +264,10 @@ export function applyFilters(stocks: StockSnapshot[], filters: ScreenFilters): S
   const filtered = stocks.filter((s) => {
     if (sectorTerms && !sectorTerms.some((term) => s.sector.toLowerCase().includes(term))) return false;
     if (filters.minDiscountPct !== undefined && s.dcf.upsidePct < filters.minDiscountPct) return false;
+    if (filters.minFairValueGapPct !== undefined && s.dcf.upsidePct < filters.minFairValueGapPct) return false;
     if (filters.minCarat !== undefined && s.caratRating < filters.minCarat) return false;
     if (filters.minQualityScore !== undefined && s.qualityScore < filters.minQualityScore) return false;
+    if (filters.minGrowthScore !== undefined && s.growthScore < filters.minGrowthScore) return false;
     if (filters.maxPeTtm !== undefined && (s.peTtm ?? 999) > filters.maxPeTtm) return false;
     return true;
   });

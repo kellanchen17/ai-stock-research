@@ -54,8 +54,10 @@ export type StockDetail = {
 export type ScreenFilters = {
   sector?: string;
   minDiscountPct?: number;
+  minFairValueGapPct?: number;
   minCarat?: number;
   minQualityScore?: number;
+  minGrowthScore?: number;
   maxPeTtm?: number;
   limit?: number;
   sortBy?: 'discount' | 'quality' | 'value';
