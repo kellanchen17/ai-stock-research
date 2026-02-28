@@ -133,6 +133,11 @@ function shouldPreferDirectMatch(query: string, matches: StockSnapshot[]) {
   return topScore >= 90 || (!hasBroadTerm && words.length <= 4);
 }
 
+function hasStrictValueIntent(query: string) {
+  const q = query.toLowerCase();
+  return ['undervalued', 'discount', 'below fair value', 'margin of safety', 'cheap'].some((k) => q.includes(k));
+}
+
 async function callOllama(system: string, user: string, jsonMode = false, temperature = 0): Promise<string | null> {
   const baseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
   const model = process.env.OLLAMA_MODEL || 'llama3.1:8b';
@@ -209,11 +214,43 @@ export async function parseScreenQuery(query: string): Promise<{ filters: Screen
 }
 
 export function buildScreenExplanation(query: string, filters: ScreenFilters, results: StockSnapshot[], provider: string) {
-  const top = results
-    .slice(0, 3)
-    .map((s) => `${s.symbol} (${s.dcf.upsidePct.toFixed(1)}% upside est.)`)
-    .join(', ');
-  return `Using ${provider}. Applied filters ${JSON.stringify(filters)}. Top matches: ${top || 'none'} for "${query}".`;
+  if (results.length === 0) {
+    return `Using ${provider}. No strict matches were found for "${query}" with filters ${JSON.stringify(filters)}.`;
+  }
+  const topFacts = results.slice(0, 3).map((s) => {
+    const relation = s.dcf.upsidePct >= 0 ? 'undervalued' : 'overvalued';
+    return `${s.symbol}: fair value $${s.dcf.valuePerShare.toFixed(2)} vs price $${s.price.toFixed(2)} (${Math.abs(s.dcf.upsidePct).toFixed(1)}% ${relation === 'undervalued' ? 'upside' : 'overvalued'})`;
+  });
+  return `Using ${provider}. Found ${results.length} matches for "${query}". ${topFacts.join(' | ')}`;
+}
+
+function padClosestMatches(base: StockSnapshot[], universe: StockSnapshot[], filters: ScreenFilters, minCount = 5) {
+  if (base.length >= minCount) return base;
+  const seen = new Set(base.map((s) => s.symbol));
+  const sectorPool = universe
+    .filter((s) => !seen.has(s.symbol))
+    .filter((s) => !filters.sector || s.sector.toLowerCase().includes(filters.sector.toLowerCase()))
+    .sort((a, b) => (b.dcf.upsidePct - a.dcf.upsidePct) + (b.growthScore - a.growthScore) * 0.1);
+  const picked: StockSnapshot[] = [...base, ...sectorPool.slice(0, Math.max(0, minCount - base.length))];
+  const seen2 = new Set(picked.map((s) => s.symbol));
+  if (picked.length >= minCount) return picked;
+
+  const broaderPool = universe
+    .filter((s) => !seen2.has(s.symbol))
+    .sort((a, b) => (b.dcf.upsidePct - a.dcf.upsidePct) + (b.growthScore - a.growthScore) * 0.1);
+  return [...picked, ...broaderPool.slice(0, Math.max(0, minCount - picked.length))];
+}
+
+function explanationHasSignError(text: string, results: StockSnapshot[]) {
+  if (!text || results.length === 0) return false;
+  const lower = text.toLowerCase();
+  return results.some((s) => {
+    const sym = s.symbol.toLowerCase();
+    if (!lower.includes(sym)) return false;
+    if (s.dcf.upsidePct < 0 && (lower.includes('upside') || lower.includes('below') || lower.includes('undervalued'))) return true;
+    if (s.dcf.upsidePct > 0 && lower.includes('overvalued')) return true;
+    return false;
+  });
 }
 
 export async function runAiScreen(query: string, universe: StockSnapshot[]) {
@@ -228,20 +265,28 @@ export async function runAiScreen(query: string, universe: StockSnapshot[]) {
   }
 
   const { filters, provider } = await parseScreenQuery(query);
-  let results = applyFilters(universe, filters);
+  const strictValue = hasStrictValueIntent(query);
+  const adjustedFilters = { ...filters };
+  if (strictValue) {
+    adjustedFilters.minFairValueGapPct = Math.max(adjustedFilters.minFairValueGapPct ?? 0, 10);
+    adjustedFilters.minDiscountPct = Math.max(adjustedFilters.minDiscountPct ?? 0, 10);
+  }
 
-  let usedFilters = filters;
-  if (results.length === 0) {
+  let results = applyFilters(universe, adjustedFilters);
+  const strictMatchCount = results.length;
+
+  let usedFilters = adjustedFilters;
+  if (results.length < 3) {
     const relaxed1: ScreenFilters = {
-      ...filters,
-      minDiscountPct: filters.minDiscountPct !== undefined ? Math.max(filters.minDiscountPct - 15, 0) : undefined,
-      minFairValueGapPct: filters.minFairValueGapPct !== undefined ? Math.max(filters.minFairValueGapPct - 15, 0) : undefined,
-      minCarat: filters.minCarat !== undefined ? Math.max(filters.minCarat - 0.5, 1) : undefined,
-      minGrowthScore: filters.minGrowthScore !== undefined ? Math.max(filters.minGrowthScore - 10, 0) : undefined,
-      limit: filters.limit ?? 12,
+      ...adjustedFilters,
+      minDiscountPct: adjustedFilters.minDiscountPct !== undefined ? Math.max(adjustedFilters.minDiscountPct - 10, strictValue ? 0 : -20) : undefined,
+      minFairValueGapPct: adjustedFilters.minFairValueGapPct !== undefined ? Math.max(adjustedFilters.minFairValueGapPct - 10, strictValue ? 0 : -20) : undefined,
+      minCarat: adjustedFilters.minCarat !== undefined ? Math.max(adjustedFilters.minCarat - 0.5, 1) : undefined,
+      minGrowthScore: adjustedFilters.minGrowthScore !== undefined ? Math.max(adjustedFilters.minGrowthScore - 10, 0) : undefined,
+      limit: adjustedFilters.limit ?? 12,
     };
     const retry1 = applyFilters(universe, relaxed1);
-    if (retry1.length > 0) {
+    if (retry1.length > results.length) {
       results = retry1;
       usedFilters = relaxed1;
     } else {
@@ -252,7 +297,7 @@ export async function runAiScreen(query: string, universe: StockSnapshot[]) {
         minGrowthScore: undefined,
       };
       const retry2 = applyFilters(universe, relaxed2);
-      if (retry2.length > 0) {
+      if (retry2.length > results.length) {
         results = retry2;
         usedFilters = relaxed2;
       } else if (filters.sector) {
@@ -263,7 +308,7 @@ export async function runAiScreen(query: string, universe: StockSnapshot[]) {
           limit: filters.limit ?? 12,
         };
         const retry3 = applyFilters(universe, relaxed3);
-        if (retry3.length > 0) {
+        if (retry3.length > results.length) {
           results = retry3;
           usedFilters = relaxed3;
         }
@@ -271,9 +316,14 @@ export async function runAiScreen(query: string, universe: StockSnapshot[]) {
     }
   }
 
-  const llmExplanation = provider === 'ollama' ? await explainWithOllama(query, usedFilters, results) : null;
+  results = padClosestMatches(results, universe, usedFilters, 5).slice(0, usedFilters.limit ?? 12);
 
-  const explanation = llmExplanation ?? buildScreenExplanation(query, usedFilters, results, provider);
+  const llmExplanation = provider === 'ollama' && !strictValue ? await explainWithOllama(query, usedFilters, results) : null;
+  let deterministic = buildScreenExplanation(query, usedFilters, results, provider);
+  if (strictValue && strictMatchCount === 0 && results.length > 0) {
+    deterministic = `No strict undervalued matches were found for this query, so showing closest alternatives. ${deterministic}`;
+  }
+  const explanation = !llmExplanation || explanationHasSignError(llmExplanation, results) ? deterministic : llmExplanation;
 
   return { filters: usedFilters, provider, results, explanation };
 }
