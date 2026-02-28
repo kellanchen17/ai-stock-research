@@ -201,7 +201,10 @@ export async function buildSnapshot(symbol: string): Promise<StockSnapshot> {
     0,
     100,
   );
-  const clarityLabel = clarityScore >= 85 ? 'FL' : clarityScore >= 70 ? 'VVS' : clarityScore >= 55 ? 'VS' : clarityScore >= 40 ? 'SI' : 'I';
+  const clarityLabel =
+    clarityScore >= 60
+      ? 'High Clarity → Low accounting risk'
+      : 'Low Clarity → Earnings volatility';
 
   const snapshot: StockSnapshot = {
     symbol: key,
