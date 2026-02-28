@@ -72,7 +72,7 @@ export function AiSearch({ initial }: { initial: StockSnapshot[] }) {
       </form>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {results.map((stock) => <StockCard key={stock.symbol} stock={stock} />)}
+        {results.map((stock) => <StockCard key={stock.symbol} stock={stock} searchContext={data ? query : undefined} />)}
       </div>
     </div>
   );

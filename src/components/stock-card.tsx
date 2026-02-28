@@ -2,12 +2,15 @@ import Link from 'next/link';
 import type { StockSnapshot } from '@/lib/types';
 import { formatCurrency, formatPct } from '@/lib/utils';
 
-export function StockCard({ stock }: { stock: StockSnapshot }) {
+export function StockCard({ stock, searchContext }: { stock: StockSnapshot; searchContext?: string }) {
   const good = stock.dcf.upsidePct >= 0;
+  const href = searchContext
+    ? `/stocks/${stock.symbol}?q=${encodeURIComponent(searchContext)}`
+    : `/stocks/${stock.symbol}`;
 
   return (
     <Link
-      href={`/stocks/${stock.symbol}`}
+      href={href}
       className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-300"
     >
       <div className="flex items-center justify-between">

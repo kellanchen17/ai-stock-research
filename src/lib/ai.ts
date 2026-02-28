@@ -12,6 +12,11 @@ const ParsedSchema = z.object({
   sortBy: z.enum(['discount', 'quality', 'value']).optional(),
 });
 
+const StockInsightsSchema = z.object({
+  companySummary: z.string().min(20).max(600),
+  relevantIdeas: z.array(z.string().min(8).max(240)).min(2).max(5),
+});
+
 function heuristicParse(query: string): ScreenFilters {
   const q = query.toLowerCase();
   const filters: ScreenFilters = { limit: 12, sortBy: 'discount' };
@@ -202,4 +207,45 @@ export async function runAiScreen(query: string, universe: StockSnapshot[]) {
   const explanation = llmExplanation ?? buildScreenExplanation(query, usedFilters, results, provider);
 
   return { filters: usedFilters, provider, results, explanation };
+}
+
+function fallbackStockInsights(stock: StockSnapshot, searchContext?: string) {
+  const contextLine = searchContext ? ` for "${searchContext}"` : '';
+  return {
+    companySummary: `${stock.name} (${stock.symbol}) operates in the ${stock.sector} sector. It is currently trading around ${stock.price.toFixed(2)} with an estimated DCF upside of ${stock.dcf.upsidePct.toFixed(1)}%.`,
+    relevantIdeas: [
+      `Compare ${stock.symbol}'s value score (${stock.valueScore}) and quality score (${stock.qualityScore})${contextLine}.`,
+      `Stress-test the DCF assumptions, especially discount rate (${(stock.dcf.assumptions.discountRate * 100).toFixed(1)}%) and terminal growth (${(stock.dcf.assumptions.terminalGrowth * 100).toFixed(1)}%).`,
+      `Track whether recent price moves change the margin of safety versus fair value (${stock.dcf.valuePerShare.toFixed(2)}).`,
+    ],
+  };
+}
+
+export async function generateStockInsights(stock: StockSnapshot, searchContext?: string) {
+  const text = await callOllama(
+    'You are an equity research assistant. Return ONLY valid JSON with keys: companySummary (string), relevantIdeas (array of short strings). No markdown.',
+    `Stock snapshot: ${JSON.stringify({
+      symbol: stock.symbol,
+      name: stock.name,
+      sector: stock.sector,
+      price: stock.price,
+      dcfUpsidePct: Number(stock.dcf.upsidePct.toFixed(2)),
+      fairValuePerShare: Number(stock.dcf.valuePerShare.toFixed(2)),
+      valueScore: stock.valueScore,
+      qualityScore: stock.qualityScore,
+      moatProxyScore: stock.moatProxyScore,
+      morningstarStars: stock.morningstarStars ?? null,
+    })}\nUser search context: ${searchContext || 'none provided'}\nGive 2-4 relevant ideas tailored to this context if available.`,
+    true,
+    0.2,
+  );
+
+  if (!text) return fallbackStockInsights(stock, searchContext);
+
+  try {
+    const parsed = JSON.parse(normalizeJsonText(text));
+    return StockInsightsSchema.parse(parsed);
+  } catch {
+    return fallbackStockInsights(stock, searchContext);
+  }
 }
