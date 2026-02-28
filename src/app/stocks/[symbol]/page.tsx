@@ -27,6 +27,7 @@ export default async function StockPage({
   const s = detail.snapshot;
   const insights = await generateStockInsights(s, q);
   const dcfHref = q ? `/stocks/${s.symbol}/dcf?q=${encodeURIComponent(q)}` : `/stocks/${s.symbol}/dcf`;
+  const caratHref = q ? `/stocks/${s.symbol}/carat?q=${encodeURIComponent(q)}` : `/stocks/${s.symbol}/carat`;
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <div className="mx-auto max-w-6xl px-6 py-10 space-y-6">
@@ -42,7 +43,9 @@ export default async function StockPage({
             <div className="text-right">
               <p className="text-3xl font-semibold">{formatCurrency(s.price)}</p>
               <p className={s.changePct >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{formatPct(s.changePct)}</p>
-              <p className="text-amber-600 text-sm mt-1">Carat Rating: 💎 {s.caratRating.toFixed(1)} ct · Clarity {s.clarityLabel}</p>
+              <Link href={caratHref} className="text-amber-600 text-sm mt-1 inline-block hover:text-amber-500">
+                Carat Rating: 💎 {s.caratRating.toFixed(1)} ct · {s.clarityLabel} →
+              </Link>
             </div>
           </div>
         </section>
